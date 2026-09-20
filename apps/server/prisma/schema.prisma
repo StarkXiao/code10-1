@@ -1,0 +1,580 @@
+// 衣物修补日志 · 数据模型
+// 依据：项目文档.md 第 8 章
+//
+// 说明：SQLite 下 Prisma 不支持 enum，全部枚举字段以 String 存储，
+// 取值集合的唯一真相在 packages/shared/src/enums.ts，写入前由 Zod 校验。
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------- 账号与衣橱
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  displayName  String   @map("display_name")
+  timezone     String   @default("Asia/Shanghai")
+  reminderHour Int      @default(9) @map("reminder_hour")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  ownedWardrobes  Wardrobe[]       @relation("WardrobeOwner")
+  memberships     WardrobeMember[]
+  createdGarments Garment[]        @relation("GarmentCreator")
+  reminders       Reminder[]
+
+  @@map("users")
+}
+
+model Wardrobe {
+  id                  String   @id @default(cuid())
+  ownerId             String   @map("owner_id")
+  name                String
+  inviteCode          String   @unique @map("invite_code")
+  defaultReminderHour Int      @default(9) @map("default_reminder_hour")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  owner         User             @relation("WardrobeOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members       WardrobeMember[]
+  garments      Garment[]
+  fabricSources FabricSource[]
+  reminderRules ReminderRule[]
+  reminders     Reminder[]
+  shareLinks    ShareLink[]
+  activityLogs  ActivityLog[]
+
+  @@map("wardrobes")
+}
+
+model WardrobeMember {
+  id         String   @id @default(cuid())
+  wardrobeId String   @map("wardrobe_id")
+  userId     String   @map("user_id")
+  role       String   @default("member")
+  joinedAt   DateTime @default(now()) @map("joined_at")
+
+  wardrobe Wardrobe @relation(fields: [wardrobeId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([wardrobeId, userId])
+  @@map("wardrobe_members")
+}
+
+// ---------------------------------------------------------------- 衣物档案
+
+model Garment {
+  id                  String    @id @default(cuid())
+  wardrobeId          String    @map("wardrobe_id")
+  code                String
+  name                String
+  category            String
+  brand               String?
+  sizeLabel           String?   @map("size_label")
+  materialPrimary     String    @map("material_primary")
+  materialComposition Json?     @map("material_composition")
+  materialStretch     String?   @map("material_stretch")
+  knitOrWoven         String    @map("knit_or_woven")
+  seasonTags          Json
+  color               String?
+  purchaseDate        DateTime? @map("purchase_date")
+  purchasePrice       Decimal?  @map("purchase_price")
+  careWashTemp        Int?      @map("care_wash_temp")
+  careMachineWash     Boolean?  @map("care_machine_wash")
+  careDryCleanOnly    Boolean?  @map("care_dry_clean_only")
+  careNote            String?   @map("care_note")
+  status              String    @default("active")
+  retiredAt           DateTime? @map("retired_at")
+  disposition         String?
+  dispositionNote     String?   @map("disposition_note")
+  storageLocation     String?   @map("storage_location")
+  firstWearDate       DateTime? @map("first_wear_date")
+  lastWashedOn        DateTime? @map("last_washed_on")
+  wearsSinceWash      Int       @default(0) @map("wears_since_wash")
+  healthScore         Int?      @map("health_score")
+  note                String?
+  createdBy           String    @map("created_by")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+  deletedAt           DateTime? @map("deleted_at")
+
+  wardrobe      Wardrobe          @relation(fields: [wardrobeId], references: [id], onDelete: Cascade)
+  creator       User              @relation("GarmentCreator", fields: [createdBy], references: [id])
+  photos        GarmentPhoto[]
+  annotations   PhotoAnnotation[]
+  damageEvents  DamageEvent[]
+  wearLogs      WearLog[]
+  donorFor      FabricSource[]    @relation("DonorGarment")
+
+  @@unique([wardrobeId, code])
+  @@index([wardrobeId, status])
+  @@index([wardrobeId, materialPrimary])
+  @@index([wardrobeId, status, updatedAt])
+  @@map("garments")
+}
+
+model GarmentPhoto {
+  id           String    @id @default(cuid())
+  garmentId    String    @map("garment_id")
+  view         String
+  storagePath  String    @map("storage_path")
+  thumbPath    String    @map("thumb_path")
+  originalName String?   @map("original_name")
+  mimeType     String    @map("mime_type")
+  width        Int
+  height       Int
+  sizeBytes    Int       @map("size_bytes")
+  sha256       String
+  capturedAt   DateTime? @map("captured_at")
+  exifStripped Boolean   @default(true) @map("exif_stripped")
+  pairedPhotoId String?  @map("paired_photo_id")
+  note         String?
+  createdBy    String    @map("created_by")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  deletedAt    DateTime? @map("deleted_at")
+
+  garment     Garment           @relation(fields: [garmentId], references: [id], onDelete: Cascade)
+  annotations PhotoAnnotation[]
+
+  @@index([garmentId, view])
+  @@map("garment_photos")
+}
+
+model PhotoAnnotation {
+  id            String    @id @default(cuid())
+  photoId       String    @map("photo_id")
+  garmentId     String    @map("garment_id")
+  kind          String
+  geometry      Json
+  radius        Float?
+  partId        String?   @map("part_id")
+  label         String?
+  color         String    @default("#e8590c")
+  damageEventId String?   @map("damage_event_id")
+  repairId      String?   @map("repair_id")
+  status        String    @default("draft")
+  note          String?
+  frozen        Boolean   @default(false)
+  createdBy     String    @map("created_by")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  photo       GarmentPhoto @relation(fields: [photoId], references: [id], onDelete: Cascade)
+  garment     Garment      @relation(fields: [garmentId], references: [id], onDelete: Cascade)
+  part        Part?        @relation(fields: [partId], references: [id])
+  damageEvent DamageEvent? @relation(fields: [damageEventId], references: [id])
+  repair      Repair?      @relation(fields: [repairId], references: [id])
+
+  @@index([photoId])
+  @@index([garmentId, status])
+  @@index([damageEventId])
+  @@map("photo_annotations")
+}
+
+// ---------------------------------------------------------------- 字典
+
+model Part {
+  id        String   @id @default(cuid())
+  category  String?
+  parentId  String?  @map("parent_id")
+  name      String
+  code      String   @unique
+  sortOrder Int      @default(100) @map("sort_order")
+  isBuiltin Boolean  @default(false) @map("is_builtin")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  parent      Part?             @relation("PartTree", fields: [parentId], references: [id])
+  children    Part[]            @relation("PartTree")
+  annotations PhotoAnnotation[]
+  damageEvents DamageEvent[]
+
+  @@map("parts")
+}
+
+model DamageType {
+  id                   String   @id @default(cuid())
+  code                 String   @unique
+  name                 String
+  defaultSeverity      String   @default("moderate") @map("default_severity")
+  suggestedStitchCodes Json     @map("suggested_stitch_codes")
+  typicalCauses        Json     @map("typical_causes")
+  isBuiltin            Boolean  @default(false) @map("is_builtin")
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  damageEvents DamageEvent[]
+
+  @@map("damage_types")
+}
+
+model Stitch {
+  id                  String   @id @default(cuid())
+  code                String   @unique
+  name                String
+  suitableFabrics     Json     @map("suitable_fabrics")
+  suitableDamageTypes Json     @map("suitable_damage_types")
+  difficulty          String   @default("easy")
+  typicalMinutes      Int?     @map("typical_minutes")
+  requiresMachine     Boolean  @default(false) @map("requires_machine")
+  description         String   @default("")
+  isBuiltin           Boolean  @default(false) @map("is_builtin")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  repairs Repair[]
+
+  @@map("stitches")
+}
+
+model Material {
+  id                 String   @id @default(cuid())
+  code               String   @unique
+  name               String
+  durabilityScore    Int      @map("durability_score")
+  washAdvice         String   @map("wash_advice")
+  dryAdvice          String   @map("dry_advice")
+  typicalWeakPoints  Json     @map("typical_weak_points")
+  isBuiltin          Boolean  @default(false) @map("is_builtin")
+
+  @@map("materials")
+}
+
+model CareRule {
+  id                    String   @id @default(cuid())
+  materialCode          String   @unique @map("material_code")
+  wearCountBeforeWash   Int      @map("wear_count_before_wash")
+  checkIntervalDays     Int      @map("check_interval_days")
+  seasonalCheckMonths   Json     @map("seasonal_check_months")
+  avoid                 Json
+  observationDaysSelf   Int      @default(14) @map("observation_days_self")
+  observationDaysShop   Int      @default(7) @map("observation_days_shop")
+
+  @@map("care_rules")
+}
+
+// ---------------------------------------------------------------- 破损与修补
+
+model DamageEvent {
+  id              String    @id @default(cuid())
+  garmentId       String    @map("garment_id")
+  code            String
+  damageTypeId    String    @map("damage_type_id")
+  severity        String
+  partId          String?   @map("part_id")
+  detectedAt      DateTime  @map("detected_at")
+  detectedSource  String    @default("self") @map("detected_source")
+  description     String?
+  causeGuess      String?   @map("cause_guess")
+  measurableSize  Json?     @map("measurable_size")
+  status          String    @default("pending")
+  scheduledAt     DateTime? @map("scheduled_at")
+  resolvedAt      DateTime? @map("resolved_at")
+  locationUnknown Boolean   @default(false) @map("location_unknown")
+  locationNote    String?   @map("location_note")
+  recurrenceOf    String?   @map("recurrence_of")
+  recurrenceIndex Int?      @map("recurrence_index")
+  photosSnapshot  Json?     @map("photos_snapshot")
+  cancelReason    String?   @map("cancel_reason")
+  createdBy       String    @map("created_by")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  garment      Garment           @relation(fields: [garmentId], references: [id], onDelete: Cascade)
+  damageType   DamageType        @relation(fields: [damageTypeId], references: [id])
+  part         Part?             @relation(fields: [partId], references: [id])
+  repairs      Repair[]
+  annotations  PhotoAnnotation[]
+  original     DamageEvent?      @relation("Recurrence", fields: [recurrenceOf], references: [id])
+  recurrences  DamageEvent[]     @relation("Recurrence")
+
+  @@unique([garmentId, code])
+  @@index([garmentId, status])
+  @@index([garmentId, partId, damageTypeId])
+  @@index([recurrenceOf])
+  @@map("damage_events")
+}
+
+model Repair {
+  id                   String    @id @default(cuid())
+  damageEventId        String    @map("damage_event_id")
+  round                Int       @default(1)
+  executedBy           String    @map("executed_by")
+  shopName             String?   @map("shop_name")
+  shopCost             Decimal?  @map("shop_cost")
+  stitchId             String    @map("stitch_id")
+  stitchSecondaryIds   Json?     @map("stitch_secondary_ids")
+  threadType           String?   @map("thread_type")
+  threadColor          String?   @map("thread_color")
+  durationMinutes      Int?      @map("duration_minutes")
+  cost                 Decimal?
+  startedAt            DateTime  @map("started_at")
+  finishedAt           DateTime  @map("finished_at")
+  resultRating         String?   @map("result_rating")
+  observationDays      Int       @default(14) @map("observation_days")
+  observationUntil     DateTime  @map("observation_until")
+  status               String    @default("done")
+  reuseOriginalFabric  Boolean   @default(false) @map("reuse_original_fabric")
+  note                 String?
+  createdBy            String    @map("created_by")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  damageEvent DamageEvent     @relation(fields: [damageEventId], references: [id], onDelete: Cascade)
+  stitch      Stitch          @relation(fields: [stitchId], references: [id])
+  change      RepairChange?
+  materials   RepairMaterial[]
+  reviews     ReviewResult[]
+  txns        InventoryTxn[]
+  annotations PhotoAnnotation[]
+
+  @@unique([damageEventId, round])
+  @@index([status, observationUntil])
+  @@map("repairs")
+}
+
+model RepairMaterial {
+  id             String   @id @default(cuid())
+  repairId       String   @map("repair_id")
+  fabricSourceId String   @map("fabric_source_id")
+  amount         Float
+  unit           String
+  note           String?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  repair       Repair       @relation(fields: [repairId], references: [id], onDelete: Cascade)
+  fabricSource FabricSource @relation(fields: [fabricSourceId], references: [id])
+
+  @@index([repairId])
+  @@map("repair_materials")
+}
+
+model RepairChange {
+  id                String   @id @default(cuid())
+  repairId          String   @unique @map("repair_id")
+  visibility        String
+  colorMatch        String   @map("color_match")
+  dimensionChange   Json?    @map("dimension_change")
+  stiffness         String
+  drapeChange       String   @map("drape_change")
+  comfortNote       String?  @map("comfort_note")
+  mobilityLimited   Boolean  @default(false) @map("mobility_limited")
+  visibleFromOutside Boolean @default(false) @map("visible_from_outside")
+  photoBeforeId     String?  @map("photo_before_id")
+  photoAfterId      String?  @map("photo_after_id")
+  wearTestNote      String?  @map("wear_test_note")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  repair Repair @relation(fields: [repairId], references: [id], onDelete: Cascade)
+
+  @@map("repair_changes")
+}
+
+model ReviewResult {
+  id                String   @id @default(cuid())
+  repairId          String   @map("repair_id")
+  reviewedAt        DateTime @map("reviewed_at")
+  verdict           String
+  wornSince         Int?     @map("worn_since")
+  daysSinceRepair   Int      @map("days_since_repair")
+  reoccurred        Boolean  @default(false)
+  verdictNote       String?  @map("verdict_note")
+  nextAction        String   @map("next_action")
+  triggeredRepairId String?  @map("triggered_repair_id")
+  sourceReminderId  String?  @map("source_reminder_id")
+  createdBy         String   @map("created_by")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  repair Repair @relation(fields: [repairId], references: [id], onDelete: Cascade)
+
+  @@index([repairId])
+  @@index([reviewedAt])
+  @@map("review_results")
+}
+
+// ---------------------------------------------------------------- 穿着与库存
+
+model WearLog {
+  id              String   @id @default(cuid())
+  garmentId       String   @map("garment_id")
+  wornOn          DateTime @map("worn_on")
+  session         String   @default("full_day")
+  seasonSnapshot  String   @map("season_snapshot")
+  weatherSnapshot Json?    @map("weather_snapshot")
+  occasion        String?
+  intensity       String   @default("normal")
+  note            String?
+  clientOpId      String?  @unique @map("client_op_id")
+  createdBy       String   @map("created_by")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  garment Garment @relation(fields: [garmentId], references: [id], onDelete: Cascade)
+
+  @@unique([garmentId, wornOn])
+  @@index([garmentId, wornOn])
+  @@map("wear_logs")
+}
+
+model FabricSource {
+  id               String    @id @default(cuid())
+  wardrobeId       String    @map("wardrobe_id")
+  name             String
+  kind             String
+  donorGarmentId   String?   @map("donor_garment_id")
+  materialPrimary  String    @map("material_primary")
+  color            String?
+  compositionNote  String?   @map("composition_note")
+  price            Decimal?
+  purchaseDate     DateTime? @map("purchase_date")
+  purchaseLocation String?   @map("purchase_location")
+  isActive         Boolean   @default(true) @map("is_active")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  wardrobe   Wardrobe         @relation(fields: [wardrobeId], references: [id], onDelete: Cascade)
+  donorGarment Garment?       @relation("DonorGarment", fields: [donorGarmentId], references: [id])
+  inventory  FabricInventory?
+  materials  RepairMaterial[]
+
+  @@index([wardrobeId, isActive])
+  @@map("fabric_sources")
+}
+
+model FabricInventory {
+  id                String   @id @default(cuid())
+  fabricSourceId    String   @unique @map("fabric_source_id")
+  unit              String
+  initialAmount     Float    @map("initial_amount")
+  remainingAmount   Float    @map("remaining_amount")
+  lowStockThreshold Float    @map("low_stock_threshold")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  fabricSource FabricSource  @relation(fields: [fabricSourceId], references: [id], onDelete: Cascade)
+  txns         InventoryTxn[]
+
+  @@map("fabric_inventory")
+}
+
+model InventoryTxn {
+  id         String   @id @default(cuid())
+  inventoryId String  @map("inventory_id")
+  repairId   String?  @map("repair_id")
+  direction  String
+  amount     Float
+  reason     String?
+  createdBy  String   @map("created_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  inventory FabricInventory @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+  repair    Repair?         @relation(fields: [repairId], references: [id])
+
+  @@index([inventoryId, createdAt])
+  @@map("inventory_txns")
+}
+
+// ---------------------------------------------------------------- 提醒
+
+model ReminderRule {
+  id           String   @id @default(cuid())
+  wardrobeId   String   @map("wardrobe_id")
+  code         String?
+  name         String
+  triggerKind  String   @map("trigger_kind")
+  params       Json
+  scopeFilter  Json     @map("scope_filter")
+  scheduleCron String   @default("0 * * * *") @map("schedule_cron")
+  channel      String   @default("inapp")
+  priority     String   @default("normal")
+  isEnabled    Boolean  @default(true) @map("is_enabled")
+  isBuiltin    Boolean  @default(false) @map("is_builtin")
+  lastRunAt    DateTime? @map("last_run_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  wardrobe  Wardrobe   @relation(fields: [wardrobeId], references: [id], onDelete: Cascade)
+  reminders Reminder[]
+
+  @@unique([wardrobeId, code])
+  @@index([wardrobeId, isEnabled])
+  @@map("reminder_rules")
+}
+
+model Reminder {
+  id             String    @id @default(cuid())
+  wardrobeId     String    @map("wardrobe_id")
+  userId         String    @map("user_id")
+  ruleId         String?   @map("rule_id")
+  subjectType    String    @map("subject_type")
+  subjectId      String    @map("subject_id")
+  title          String
+  body           String
+  reason         String
+  actionKind     String    @map("action_kind")
+  actionPayload  Json?     @map("action_payload")
+  dueAt          DateTime  @map("due_at")
+  expireAt       DateTime  @map("expire_at")
+  status         String    @default("pending")
+  occurrenceKey  String    @map("occurrence_key")
+  notifiedAt     DateTime? @map("notified_at")
+  handledAt      DateTime? @map("handled_at")
+  handledBy      String?   @map("handled_by")
+  snoozeUntil    DateTime? @map("snooze_until")
+  dismissReason  String?   @map("dismiss_reason")
+  dismissNote    String?   @map("dismiss_note")
+  resultRef      Json?     @map("result_ref")
+  priority       String    @default("normal")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  wardrobe Wardrobe      @relation(fields: [wardrobeId], references: [id], onDelete: Cascade)
+  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rule     ReminderRule? @relation(fields: [ruleId], references: [id])
+
+  @@unique([subjectType, subjectId, occurrenceKey])
+  @@index([userId, status, dueAt])
+  @@map("reminders")
+}
+
+// ---------------------------------------------------------------- 分享与审计
+
+model ShareLink {
+  id          String    @id @default(cuid())
+  wardrobeId  String    @map("wardrobe_id")
+  tokenHash   String    @unique @map("token_hash")
+  scope       String    @default("garment")
+  garmentIds  Json
+  expiresAt   DateTime  @map("expires_at")
+  accessCount Int       @default(0) @map("access_count")
+  lastAccessAt DateTime? @map("last_access_at")
+  createdBy   String    @map("created_by")
+  revokedAt   DateTime? @map("revoked_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  wardrobe Wardrobe @relation(fields: [wardrobeId], references: [id], onDelete: Cascade)
+
+  @@index([wardrobeId])
+  @@map("share_links")
+}
+
+model ActivityLog {
+  id         String   @id @default(cuid())
+  wardrobeId String   @map("wardrobe_id")
+  actorId    String   @map("actor_id")
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id")
+  action     String
+  diff       Json?
+  requestId  String?  @map("request_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  wardrobe Wardrobe @relation(fields: [wardrobeId], references: [id], onDelete: Cascade)
+
+  @@index([wardrobeId, createdAt])
+  @@index([entityType, entityId])
+  @@map("activity_logs")
+}

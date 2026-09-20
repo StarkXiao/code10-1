@@ -1,0 +1,41 @@
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: garment-mending-log:latest
+    container_name: gml-server
+    restart: unless-stopped
+    ports:
+      - "3100:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DATABASE_URL: "file:./data/app.db"
+      UPLOAD_DIR: ./data/uploads
+      BACKUP_DIR: ./data/backup
+      TZ: Asia/Shanghai
+      JWT_SECRET: change-me-in-production-this-is-a-dev-secret
+      CRON_ENABLED: "true"
+      SHARE_LINK_TTL_HOURS: "72"
+      WEB_ORIGIN: http://localhost:3100
+    volumes:
+      - ./apps/server/data:/app/apps/server/data
+
+  # 可选：切换到 PostgreSQL（把 DATABASE_URL 换成 postgresql://gml:gml@db:5432/gml 即可）
+  db:
+    image: postgres:16-alpine
+    container_name: gml-db
+    profiles: ["postgres"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: gml
+      POSTGRES_PASSWORD: gml
+      POSTGRES_DB: gml
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:

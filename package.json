@@ -1,0 +1,39 @@
+{
+  "name": "garment-mending-log",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "衣物修补日志 - 记录破损位置、针法、布料来源与修补后变化，按材质/季节/穿着频率回看长期使用情况",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,web -c blue,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "npm --workspace @gml/server run dev",
+    "dev:web": "npm --workspace @gml/web run dev",
+    "build": "npm --workspace @gml/web run build",
+    "start": "npm --workspace @gml/server run start",
+    "worker": "npm --workspace @gml/server run worker",
+    "db:generate": "npm --workspace @gml/server run db:generate",
+    "db:migrate": "npm --workspace @gml/server run db:migrate",
+    "db:seed": "npm --workspace @gml/server run db:seed",
+    "db:studio": "npm --workspace @gml/server run db:studio",
+    "reminders:run": "npm --workspace @gml/server run reminders:run",
+    "verify:api": "npm --workspace @gml/server run verify:api",
+    "backup": "npm --workspace @gml/server run backup",
+    "restore": "npm --workspace @gml/server run restore",
+    "verify:media": "npm --workspace @gml/server run verify:media",
+    "test": "npm --workspace @gml/server run test",
+    "test:e2e": "npm --workspace @gml/web run test:e2e",
+    "typecheck": "npm --workspace @gml/shared run typecheck && npm --workspace @gml/server run typecheck && npm --workspace @gml/web run typecheck",
+    "setup": "npm install && npm run db:generate && npm run db:migrate && npm run db:seed"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "^5.7.3"
+  }
+}

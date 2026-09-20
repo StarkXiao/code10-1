@@ -1,0 +1,119 @@
+:root {
+  --gml-accent: #c2410c;
+  --gml-bg: #f7f7f5;
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  background: var(--gml-bg);
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', sans-serif;
+  color: #1f2328;
+}
+
+#app {
+  min-height: 100vh;
+}
+
+.page {
+  padding: 16px 20px 48px;
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+.page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.page-title {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.page-subtitle {
+  color: #6b7280;
+  font-size: 13px;
+  margin-top: 4px;
+}
+
+.grid-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.muted {
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.field-hint {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 4px;
+}
+
+.card-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.el-card + .el-card {
+  margin-top: 12px;
+}
+
+.stat-row {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.stat-block {
+  min-width: 96px;
+}
+
+.stat-value {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.stat-label {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.annotation-canvas-wrap {
+  position: relative;
+  width: 100%;
+  background: #111827;
+  border-radius: 8px;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+@media (max-width: 720px) {
+  .page {
+    padding: 12px 12px 64px;
+  }
+}

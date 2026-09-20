@@ -1,0 +1,29 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+*.tsbuildinfo
+.vite/
+
+# 环境变量（.env.example 要提交）
+.env
+.env.local
+.env.*.local
+
+# 运行时数据：SQLite 数据库、上传的照片、备份 zip（都不进仓库）
+data/
+*.db
+*.db-journal
+*.before-restore.bak
+
+# 测试与覆盖率产物
+coverage/
+test-results/
+playwright-report/
+.eslintcache
+
+# 日志与系统文件
+*.log
+.DS_Store
+.idea/
