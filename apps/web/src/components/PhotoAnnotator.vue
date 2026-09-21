@@ -18,6 +18,8 @@ import {
 import { photoFileUrl } from '../api/client';
 import type { PhotoAnnotationRow } from '../types';
 
+export type AnnotatorTool = 'point' | 'rect' | 'polyline' | 'batch' | 'calibrate';
+
 export interface DraftAnnotation {
   localId: string;
   kind: 'point' | 'rect' | 'polyline';
@@ -27,18 +29,50 @@ export interface DraftAnnotation {
   color: string;
 }
 
+/** 跨视角联动时，从另一张照片投影过来的"鬼影"标记 */
+export interface GhostAnnotation {
+  id: string;
+  point: Point;
+  active: boolean;
+}
+
+/** 框选批量布点的预览点（在配置面板参数变化时实时预览） */
+export interface BatchPreview {
+  rect: { x: number; y: number; w: number; h: number };
+  points: Point[];
+}
+
+/** 请求画布把某个归一化坐标居中并放大（切换视角联动对齐时由父组件发出） */
+export interface FocusRequest {
+  nonce: number;
+  norm: Point;
+  zoom?: number;
+}
+
 const props = defineProps<{
   photo: { id: string; width: number; height: number } | null;
   annotations: PhotoAnnotationRow[];
   drafts: DraftAnnotation[];
   selectedId: string | null;
-  tool: 'point' | 'rect' | 'polyline';
+  tool: AnnotatorTool;
   pendingPartName?: string;
   maxHeight?: number;
+  /** 切换视角后从源照片投影过来的标记位置，虚线圆显示在画布上 */
+  ghosts?: GhostAnnotation[];
+  /** 框选批量布点的实时预览（矩形 + 将要生成的点） */
+  batchPreview?: BatchPreview | null;
+  /** 视角校准模式下已落在本张照片上的校准点 */
+  calibrationPoints?: Point[];
+  /** 请求聚焦到某点（带动画），nonce 变化即触发 */
+  focusRequest?: FocusRequest | null;
 }>();
 
 const emit = defineEmits<{
   (e: 'create-draft', payload: { kind: DraftAnnotation['kind']; geometry: DraftAnnotation['geometry'] }): void;
+  /** 框选结束：把归一化矩形交给父组件弹批量配置 */
+  (e: 'batch-rect', rect: { x: number; y: number; w: number; h: number }): void;
+  /** 校准模式下点击画布 */
+  (e: 'calibrate-click', norm: Point): void;
   (e: 'update-geometry', payload: { source: 'saved' | 'draft'; id: string; geometry: DraftAnnotation['geometry'] }): void;
   /** 拖动结束才提交服务端：拖动过程只改本地预览，避免每移动一像素发一次请求 */
   (e: 'commit-geometry', payload: { id: string }): void;
@@ -55,7 +89,7 @@ const imageBitmap = ref<ImageBitmap | null>(null);
 const imageReady = ref(false);
 
 const dragging = ref<{
-  target: 'none' | 'saved' | 'draft' | 'new-rect' | 'pan';
+  target: 'none' | 'saved' | 'draft' | 'new-rect' | 'new-batch' | 'pan';
   id?: string;
   startNorm?: Point;
   startGeometry?: DraftAnnotation['geometry'];
@@ -65,6 +99,10 @@ const dragging = ref<{
 
 const polylineDraft = ref<Point[]>([]);
 const hoveredId = ref<string | null>(null);
+/** 框选过程中的临时矩形（rect 工具画矩形、batch 工具圈批量区域共用） */
+const marqueeRect = ref<{ x: number; y: number; w: number; h: number } | null>(null);
+
+let focusAnimationFrame = 0;
 
 const canvasHeight = computed(() => props.maxHeight ?? 520);
 const imageSize = computed(() => ({ width: props.photo?.width ?? 1, height: props.photo?.height ?? 1 }));
@@ -193,7 +231,112 @@ function draw(): void {
     }
   }
 
+  // 多视角联动：另一张照片投影过来的标记（鬼影）。只显示位置提示，不可直接编辑
+  for (const ghost of props.ghosts ?? []) {
+    const pixel = normToCanvas(ghost.point);
+    if (pixel.x < -20 || pixel.x > cssWidth + 20 || pixel.y < -20 || pixel.y > cssHeight + 20) continue;
+    ctx.save();
+    ctx.strokeStyle = ghost.active ? '#34d399' : '#60a5fa';
+    ctx.lineWidth = ghost.active ? 2.5 : 1.5;
+    ctx.setLineDash([4, 4]);
+    ctx.globalAlpha = ghost.active ? 0.95 : 0.55;
+    ctx.beginPath();
+    ctx.arc(pixel.x, pixel.y, ghost.active ? 11 : 8, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = ghost.active ? 0.35 : 0.2;
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.beginPath();
+    ctx.arc(pixel.x, pixel.y, ghost.active ? 5 : 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // 视角校准点：本张照片上已确认的同名点
+  for (const point of props.calibrationPoints ?? []) {
+    const pixel = normToCanvas(point);
+    ctx.save();
+    ctx.strokeStyle = '#c084fc';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(pixel.x, pixel.y, 9, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(pixel.x - 13, pixel.y);
+    ctx.lineTo(pixel.x + 13, pixel.y);
+    ctx.moveTo(pixel.x, pixel.y - 13);
+    ctx.lineTo(pixel.x, pixel.y + 13);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // 框选批量布点：配置面板预览的矩形与待生成点
+  const preview = props.batchPreview;
+  if (preview) {
+    drawMarquee(ctx, preview.rect, '#f59e0b');
+    for (const point of preview.points) {
+      const pixel = normToCanvas(point);
+      ctx.save();
+      ctx.fillStyle = '#f59e0b';
+      ctx.globalAlpha = 0.75;
+      ctx.beginPath();
+      ctx.arc(pixel.x, pixel.y, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  // 正在拖的框选矩形（rect / batch 工具共用橡皮筋反馈）
+  if (marqueeRect.value) {
+    drawMarquee(ctx, marqueeRect.value, props.tool === 'batch' ? '#f59e0b' : '#9ca3af');
+  }
+
   ctx.restore();
+}
+
+/** 框选矩形：半透明填充 + 虚线描边 */
+function drawMarquee(ctx: CanvasRenderingContext2D, rect: { x: number; y: number; w: number; h: number }, color: string): void {
+  const a = normToCanvas({ x: rect.x, y: rect.y });
+  const b = normToCanvas({ x: rect.x + rect.w, y: rect.y + rect.h });
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.globalAlpha = 0.12;
+  ctx.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([6, 4]);
+  ctx.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
+  ctx.restore();
+}
+
+/** 以动画方式把归一化坐标居中并缩放到目标倍率（多视角联动对齐同一部位） */
+function focusOnNorm(target: Point, targetZoom = 1.8): void {
+  cancelAnimationFrame(focusAnimationFrame);
+  const startZoom = zoom.value;
+  const startPan = { ...pan.value };
+  // 目标点在视口居中所需的 pan：pan = 视口中心 - 目标点在 base 变换下的位置 × zoom
+  const base = baseTransform.value;
+  const goalPan = {
+    x: viewportSize.value.width / 2 - (base.offsetX + target.x * base.drawWidth) * targetZoom,
+    y: viewportSize.value.height / 2 - (base.offsetY + target.y * base.drawHeight) * targetZoom,
+  };
+  const duration = 280;
+  const startTime = performance.now();
+  const ease = (t: number) => (t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2);
+  const step = (now: number): void => {
+    const t = Math.min(1, (now - startTime) / duration);
+    const k = ease(t);
+    zoom.value = Math.round((startZoom + (targetZoom - startZoom) * k) * 100) / 100;
+    pan.value = {
+      x: startPan.x + (goalPan.x - startPan.x) * k,
+      y: startPan.y + (goalPan.y - startPan.y) * k,
+    };
+    draw();
+    if (t < 1) focusAnimationFrame = requestAnimationFrame(step);
+    else pan.value = clampPan(pan.value);
+  };
+  focusAnimationFrame = requestAnimationFrame(step);
 }
 
 function drawAnnotation(
@@ -296,6 +439,19 @@ function onPointerDown(event: PointerEvent): void {
     return;
   }
 
+  // 视角校准：点一下就上报，不选标记、不画矩形
+  if (props.tool === 'calibrate') {
+    emit('calibrate-click', norm);
+    draw();
+    return;
+  }
+
+  // 框选批量：在空白处拖出一个矩形区域，松手交给父组件弹配置
+  if (props.tool === 'batch') {
+    dragging.value = { target: 'new-batch', startNorm: norm };
+    return;
+  }
+
   if (props.tool === 'polyline') {
     polylineDraft.value.push(norm);
     draw();
@@ -357,6 +513,14 @@ function onPointerMove(event: PointerEvent): void {
   }
 
   if (dragging.value.target === 'none') {
+    // 校准/框选工具下光标不做标记悬停高亮，避免误导
+    if (props.tool === 'calibrate' || props.tool === 'batch') {
+      if (hoveredId.value !== null) {
+        hoveredId.value = null;
+        draw();
+      }
+      return;
+    }
     const index = hitTest(
       norm,
       props.annotations.map((a) => ({ kind: a.kind, geometry: a.geometry })),
@@ -385,7 +549,7 @@ function onPointerMove(event: PointerEvent): void {
   const start = dragging.value.startNorm!;
   const geometry = dragging.value.startGeometry;
 
-  if (dragging.value.target === 'new-rect') {
+  if (dragging.value.target === 'new-rect' || dragging.value.target === 'new-batch') {
     const rect = {
       x: Math.min(start.x, norm.x),
       y: Math.min(start.y, norm.y),
@@ -393,6 +557,7 @@ function onPointerMove(event: PointerEvent): void {
       h: Math.abs(norm.y - start.y),
     };
     dragging.value.startGeometry = rect;
+    marqueeRect.value = rect;
     draw();
     return;
   }
@@ -418,10 +583,15 @@ function onPointerMove(event: PointerEvent): void {
 function onPointerUp(event?: PointerEvent): void {
   if (event) activePointers.delete(event.pointerId);
   if (activePointers.size < 2) pinchStartDistance = 0;
-  if (dragging.value.target === 'new-rect' && dragging.value.startGeometry) {
-    const geometry = dragging.value.startGeometry;
+  if (
+    (dragging.value.target === 'new-rect' || dragging.value.target === 'new-batch') &&
+    dragging.value.startGeometry
+  ) {
+    const geometry = dragging.value.startGeometry as { x: number; y: number; w: number; h: number };
+    marqueeRect.value = null;
     if ((geometry.w ?? 0) > 0.01 && (geometry.h ?? 0) > 0.01) {
-      emit('create-draft', { kind: 'rect', geometry });
+      if (dragging.value.target === 'new-batch') emit('batch-rect', geometry);
+      else emit('create-draft', { kind: 'rect', geometry });
     }
   }
   // 已保存的标记：拖动结束才落库
@@ -521,11 +691,35 @@ onMounted(() => {
 onUnmounted(() => {
   observer?.disconnect();
   window.removeEventListener('keydown', onKeydown);
+  cancelAnimationFrame(focusAnimationFrame);
 });
 
 watch(() => props.photo?.id, () => void loadImage());
-watch(() => [props.annotations, props.drafts, props.selectedId, props.tool], draw, { deep: true });
+watch(
+  () => [props.annotations, props.drafts, props.selectedId, props.tool, props.ghosts, props.batchPreview, props.calibrationPoints],
+  draw,
+  { deep: true },
+);
 watch(zoom, draw);
+
+// 切走框选类工具时丢弃没画完的橡皮筋矩形，避免残留在画布上
+watch(
+  () => props.tool,
+  (toolValue, previous) => {
+    if (toolValue !== previous && (dragging.value.target === 'new-rect' || dragging.value.target === 'new-batch')) {
+      dragging.value = { target: 'none' };
+      marqueeRect.value = null;
+    }
+  },
+);
+
+// 父组件请求聚焦（切换视角联动）：nonce 变化时播放一次居中动画
+watch(
+  () => props.focusRequest?.nonce,
+  (nonce) => {
+    if (nonce && props.focusRequest) focusOnNorm(props.focusRequest.norm, props.focusRequest.zoom ?? 1.8);
+  },
+);
 
 defineExpose({
   zoomIn: () => {
@@ -540,6 +734,7 @@ defineExpose({
     zoom.value = 1;
     pan.value = { x: 0, y: 0 };
   },
+  focusOnNorm,
   currentZoom: zoom,
   finishPolyline,
 });
@@ -551,7 +746,14 @@ defineExpose({
       <canvas
         ref="canvasRef"
         tabindex="0"
-        :style="{ cursor: tool === 'point' ? 'crosshair' : tool === 'rect' ? 'cell' : 'default' }"
+        :style="{
+          cursor:
+            tool === 'point' || tool === 'batch' || tool === 'calibrate'
+              ? 'crosshair'
+              : tool === 'rect'
+                ? 'cell'
+                : 'default',
+        }"
         @pointerdown="onPointerDown"
         @pointermove="onPointerMove"
         @pointerup="onPointerUp"
@@ -561,6 +763,8 @@ defineExpose({
       />
     </div>
     <div class="muted" style="margin-top: 6px">
+      <span v-if="tool === 'batch'" style="color: #b45309">框选批量：在图上拖出区域后松开，即可在区域内批量生成点位。 ·</span>
+      <span v-else-if="tool === 'calibrate'" style="color: #7e22ce">视角校准：在两张照片上各点一下同一个位置，切换视角就会自动对齐。 ·</span>
       <span v-if="pendingPartName">当前部位：{{ pendingPartName }} ·</span>
       缩放 {{ Math.round(zoom * 100) }}% · Shift+拖动平移 · 方向键微调选中标记 · 回车结束折线
       <span v-if="!imageReady" style="color: #e6a23c"> · 图片加载中</span>

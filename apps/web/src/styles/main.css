@@ -112,8 +112,50 @@ body {
   margin-bottom: 10px;
 }
 
+/* 多视角联动状态条 */
+.link-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  background: #f0f7ff;
+  border: 1px solid #d6e7ff;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+/* 画布卡片作为批量配置浮层的定位容器 */
+.annotator-card {
+  position: relative;
+}
+
+/* 框选批量布点配置面板，浮在画布左下角 */
+.batch-panel {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  width: 420px;
+  max-width: calc(100% - 32px);
+  z-index: 5;
+}
+
+.batch-row {
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+  white-space: nowrap;
+  margin-bottom: 8px;
+}
+
 @media (max-width: 720px) {
   .page {
     padding: 12px 12px 64px;
+  }
+
+  .batch-panel {
+    position: static;
+    width: 100%;
+    margin-top: 10px;
   }
 }
