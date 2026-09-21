@@ -116,6 +116,48 @@ export function distance(a: Point, b: Point): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
+/**
+ * 在框选矩形内生成均匀网格点（批量点位工具）。
+ *
+ * 点落在各自网格单元的中心而不是边界上，避免贴边的点被下一次框选重复命中；
+ * 坐标统一做钳制与精度处理。rows/cols 非法或矩形退化时返回空数组（由调用方提示）。
+ */
+export function gridPointsInRect(rect: RectGeometry, rows: number, cols: number): Point[] {
+  const r = Math.floor(rows);
+  const c = Math.floor(cols);
+  if (!Number.isFinite(r) || !Number.isFinite(c) || r < 1 || c < 1 || r > 20 || c > 20) return [];
+  if (!(rect.w > 0) || !(rect.h > 0)) return [];
+  const points: Point[] = [];
+  for (let row = 0; row < r; row += 1) {
+    for (let col = 0; col < c; col += 1) {
+      points.push({
+        x: roundCoord(rect.x + (rect.w * (col + 0.5)) / c),
+        y: roundCoord(rect.y + (rect.h * (row + 0.5)) / r),
+      });
+    }
+  }
+  return points;
+}
+
+/**
+ * 计算"把某个归一化点移到视口中心"所需的平移量（多视角联动对齐用）。
+ *
+ * 推导：applyZoomPan 中 offsetX = (viewport.width - drawWidth)/2 + pan.x，
+ * 要让 normalizedToViewport(point) 恰好等于视口中心，解出 pan = draw × (0.5 - point)。
+ * 返回值的合法性（别把照片拖没）由调用方的 clampPan 保证。
+ */
+export function panForFocus(
+  point: Point,
+  base: ReturnType<typeof fitTransform>,
+  viewport: ImageSize,
+  zoom = 1,
+): Point {
+  return {
+    x: base.drawWidth * zoom * (0.5 - point.x),
+    y: base.drawHeight * zoom * (0.5 - point.y),
+  };
+}
+
 /** 命中检测：返回命中的标记索引（从后往前，后画的优先） */
 export function hitTest(
   point: Point,
